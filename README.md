@@ -39,8 +39,3 @@ python main.py
 ## 输出文件
 - `addresses.csv`
 - `features.csv`
-
-
-## 注意事项
-- 确保网络畅通，可访问GitHub和Solana RPC。
-- 若使用公共RPC遇到限流，可考虑更换为Helius节点（修改`src/config.py`中的`RPC_URL`）。
