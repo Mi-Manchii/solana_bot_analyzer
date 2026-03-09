@@ -56,3 +56,52 @@
    ```bash
    git clone https://github.com/yourname/solana-bot-analyzer.git
    cd solana-bot-analyzer
+
+2. **安装依赖**：
+   ```bash
+   pip install -r requirements.txt
+
+### 配置 Helius API Key
+
+复制 `.env.example` 为 `.env`，并填入您的 API Key：
+
+```text
+HELIUS_API_KEY=your_helius_api_key_here
+```
+
+## 🚀 运行方法
+
+### 一键运行（推荐）
+- **Linux/macOS**：
+  ```bash
+  chmod +x run.sh
+  ./run.sh
+
+- **Windows**：
+- 双击 run.bat 或在命令行中执行。
+
+### 手动运行
+
+  ```bash
+  python main.py
+
+## ⚡ 运行模式说明
+
+通过 `config.py` 中的 `MODE` 变量（或 `.env` 文件）可选择两种分析模式：
+
+| 模式 | 描述 |
+| :--- | :--- |
+| **feb** | 限定在2026年2月内寻找窗口（默认）。程序会完整回溯至2月1日之前，确保2月数据完整。 |
+| **default** | 从当前时间回溯，寻找任意连续7天窗口（起始日期 ≥ 2026年2月1日），找到即停止，速度更快。 |
+
+## 📊 输出文件
+
+所有输出均保存在项目根目录的 `output/` 文件夹下：
+
+| 文件 | 描述 |
+| :--- | :--- |
+| `addresses.csv` | 符合条件的地址列表，包含来源、首次/最后出现时间、最佳窗口信息等。 |
+| `features.csv` | 每个地址的22项行为特征（见下文特征列表）。 |
+| `feature_distributions.png/pdf` | 基础特征（日均交易、夜间比例等）分布图。 |
+| `new_feature_distributions.png/pdf` | 多样性特征（程序种类、代币熵等）分布图。 |
+| `feature_correlation.png/pdf` | 所有数值特征的相关性热力图。 |
