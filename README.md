@@ -26,23 +26,26 @@
   - 通过 [Helius RPC](https://helius.xyz) 获取地址的签名历史及交易详情。需自行申请 API Key。
 
 ## 📁 项目结构
+
+```text
 .
-├── main.py # 主程序入口
-├── run.sh # Linux/macOS 一键运行脚本
-├── run.bat # Windows 一键运行脚本
-├── requirements.txt # Python 依赖
-├── .env.example # 环境变量示例
+├── main.py                 # 主程序入口
+├── run.sh                  # Linux/macOS 一键运行脚本
+├── run.bat                 # Windows 一键运行脚本
+├── requirements.txt        # Python 依赖
+├── .env.example            # 环境变量示例
 ├── address_pool.txt.example # 自定义地址池示例
 ├── src/
-│ ├── init.py
-│ ├── config.py # 配置参数（RPC、阈值、模式等）
-│ ├── address_fetcher.py # 从本地或GitHub获取地址
-│ ├── transaction_fetcher.py # RPC调用封装（含限流与重试）
-│ ├── validator.py # 连续窗口检测算法
-│ ├── feature_calculator.py # 22项特征计算
-│ ├── logger.py # 带时间戳的日志
-│ └── utils.py # 重试装饰器、速率限制器
-└── generate_plots.py # 可视化生成（分布图、热力图）
+│   ├── __init__.py
+│   ├── config.py           # 配置参数（RPC、阈值、模式等）
+│   ├── address_fetcher.py  # 从本地或GitHub获取地址
+│   ├── transaction_fetcher.py # RPC调用封装（含限流与重试）
+│   ├── validator.py        # 连续窗口检测算法
+│   ├── feature_calculator.py # 22项特征计算
+│   ├── logger.py           # 带时间戳的日志
+│   └── utils.py            # 重试装饰器、速率限制器
+└── generate_plots.py       # 可视化生成（分布图、热力图）
+```
 
 ## ⚙️ 安装与配置
 
