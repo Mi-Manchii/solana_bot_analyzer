@@ -84,6 +84,7 @@ HELIUS_API_KEY=your_helius_api_key_here
 
   ```bash
   python main.py
+  ```
 
 ## ⚡ 运行模式说明
 
