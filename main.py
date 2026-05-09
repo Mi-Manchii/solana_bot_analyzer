@@ -151,7 +151,7 @@ def test_single_address(addr, fetcher, range_start, range_end, idx, total, sourc
     log(f"开始获取 {total_sigs} 笔交易的详情（用于特征计算）...", addr_idx=idx, addr=addr)
 
     if MAX_TX_FOR_DETAILS and total_sigs > MAX_TX_FOR_DETAILS:
-        signatures = signatures[:MAX_TX_FOR_DETAILS]
+        signatures = signatures[-MAX_TX_FOR_DETAILS:]
         log(f"限制为最近 {MAX_TX_FOR_DETAILS} 笔交易以加快处理", addr_idx=idx, addr=addr)
 
     tx_details = []
@@ -280,6 +280,9 @@ def main():
     feat_csv_path = output_dir / 'features.csv'
     df_feat.to_csv(feat_csv_path, index=False)
     log(f"✅ features.csv 已生成，包含 {len(df_feat)} 行特征 -> {feat_csv_path}")
+    features_v2_path = output_dir / 'features_v2.csv'
+    df_feat.to_csv(features_v2_path, index=False)
+    log(f"✅ features_v2.csv 已生成，便于论文实验引用 -> {features_v2_path}")
 
     try:
         log("正在生成分布图...")

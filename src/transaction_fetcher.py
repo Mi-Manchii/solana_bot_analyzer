@@ -1,9 +1,18 @@
 # src/transaction_fetcher.py
 import requests
 import time
-import concurrent.futures
 from .config import RPC_URL
 from .utils import retry, rate_limited   # 导入限流装饰器
+
+
+COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
+
+
+def _pubkey(value):
+    if isinstance(value, dict):
+        return value.get("pubkey")
+    return value
+
 
 class TransactionFetcher:
     def __init__(self, rpc_url=RPC_URL):
@@ -78,19 +87,34 @@ class TransactionFetcher:
         if not result:
             return None
 
-        # 提取程序ID列表（从指令中）
+        # 提取程序ID列表、指令数量和优先费用相关信息。
         program_ids = set()
+        instruction_programs = []
+        instruction_types = []
+        compute_unit_price = 0
+        instruction_count = 0
         try:
             msg = result['transaction']['message']
             account_keys = msg['accountKeys']
             for ix in msg.get('instructions', []):
+                instruction_count += 1
+                program_id = None
                 if 'programIdIndex' in ix:
                     prog_idx = ix['programIdIndex']
                     if prog_idx < len(account_keys):
-                        prog_addr = account_keys[prog_idx]
-                        program_ids.add(prog_addr)
+                        program_id = _pubkey(account_keys[prog_idx])
                 elif 'programId' in ix:
-                    program_ids.add(ix['programId'])
+                    program_id = _pubkey(ix['programId'])
+                if program_id:
+                    program_ids.add(program_id)
+                    instruction_programs.append(program_id)
+                if ix.get('program'):
+                    instruction_types.append(str(ix.get('program')))
+                parsed = ix.get('parsed') if isinstance(ix, dict) else None
+                if program_id == COMPUTE_BUDGET_PROGRAM_ID and isinstance(parsed, dict):
+                    info = parsed.get('info', {})
+                    if parsed.get('type') == 'setComputeUnitPrice':
+                        compute_unit_price = int(info.get('microLamports', 0) or 0)
         except (KeyError, IndexError):
             pass
 
@@ -105,10 +129,25 @@ class TransactionFetcher:
         except Exception:
             pass
 
+        meta = result.get('meta') or {}
+        fee_lamports = int(meta.get('fee', 0) or 0)
+        compute_units = int(meta.get('computeUnitsConsumed', 0) or 0)
+        priority_fee_lamports = 0
+        if compute_unit_price and compute_units:
+            priority_fee_lamports = (compute_unit_price * compute_units) / 1_000_000
+
         return {
             'signature': signature,
             'program_ids': list(program_ids),
-            'tokens': list(tokens)
+            'tokens': list(tokens),
+            'block_time': result.get('blockTime'),
+            'fee_lamports': fee_lamports,
+            'priority_fee_lamports': priority_fee_lamports,
+            'compute_units_consumed': compute_units,
+            'compute_unit_price_micro_lamports': compute_unit_price,
+            'instruction_count': instruction_count,
+            'instruction_programs': instruction_programs,
+            'instruction_types': instruction_types,
         }
 
     # 修改：改为纯串行获取，避免并发导致速率不可控

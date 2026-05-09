@@ -59,18 +59,21 @@ def plot_distributions(output_dir=None):
         ('unique_programs', '调用程序种类数'),
         ('program_entropy', '程序调用熵'),
         ('unique_tokens', '交互代币种类数'),
-        ('token_entropy', '代币交互熵')
+        ('token_entropy', '代币交互熵'),
+        ('avg_priority_fee_lamports', '平均优先费用'),
+        ('priority_fee_cv', '优先费用变异系数'),
+        ('avg_instruction_count', '平均指令数'),
+        ('instruction_program_entropy', '指令程序熵'),
+        ('core_dex_interaction_ratio', '核心DEX交互占比'),
+        ('new_token_interaction_ratio', '新代币交互比例'),
     ]
     existing = [(col, label) for col, label in new_features if col in df.columns]
     if existing:
         n = len(existing)
-        if n == 4:
-            fig2, axes2 = plt.subplots(2, 2, figsize=(14, 10))
-            axes2 = axes2.flatten()
-        else:
-            fig2, axes2 = plt.subplots(1, n, figsize=(6*n, 5))
-            if n == 1:
-                axes2 = [axes2]
+        cols = 2 if n <= 4 else 3
+        rows = (n + cols - 1) // cols
+        fig2, axes2 = plt.subplots(rows, cols, figsize=(6 * cols, 4.5 * rows))
+        axes2 = axes2.flatten() if hasattr(axes2, "flatten") else [axes2]
         for ax, (col, label) in zip(axes2, existing):
             sns.histplot(df[col], bins=30, kde=True, ax=ax, color='darkorange')
             ax.set_title(f'{label} 分布', fontsize=14, fontweight='bold')
@@ -116,6 +119,13 @@ def plot_distributions(output_dir=None):
         'program_entropy': '程序熵',
         'unique_tokens': '代币种类',
         'token_entropy': '代币熵',
+        'avg_priority_fee_lamports': '平均优先费用',
+        'priority_fee_cv': '优先费用CV',
+        'priority_fee_nonzero_ratio': '优先费用非零比例',
+        'avg_instruction_count': '平均指令数',
+        'instruction_program_entropy': '指令程序熵',
+        'core_dex_interaction_ratio': '核心DEX交互占比',
+        'new_token_interaction_ratio': '新代币交互比例',
     }
     # 只保留存在的列
     corr = corr.loc[[c for c in corr.index if c in label_map], [c for c in corr.columns if c in label_map]]
