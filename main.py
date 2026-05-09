@@ -20,9 +20,9 @@ from src.feature_calculator import compute_features
 from src.logger import log
 
 # ==================== 性能调优参数 ====================
-MAX_TX_FOR_DETAILS = 500          # 用于特征计算的交易最大数量（取最近的 N 笔）
-DETAILS_DELAY = 1.0               # 每个交易详情请求后的延迟（秒），配合全局限流
-DETAILS_PROGRESS_BATCH = 100      # 每获取 100 笔交易详情输出一次进度
+MAX_TX_FOR_DETAILS = 100          # [性能优化] 从 500 降为 100，足以提取近期代币和程序交互特征
+DETAILS_DELAY = 0.2               # [性能优化] 降低 RPC 请求延迟，加快数据收集速度
+DETAILS_PROGRESS_BATCH = 50       # 进度打印批次
 # ====================================================
 
 def test_single_address(addr, fetcher, range_start, range_end, idx, total, source_label, source_link, mode):
@@ -46,9 +46,7 @@ def test_single_address(addr, fetcher, range_start, range_end, idx, total, sourc
     ts_start = range_start.timestamp()
     ts_end = range_end.timestamp() if range_end else float('inf')
 
-    # 根据模式确定获取上限：
-    # - feb 模式且尚未找到窗口时，需要完整回溯到2月1日之前，因此不设上限（使用一个很大的数）
-    # - 其他情况（default模式或已找到窗口）使用 FETCH_LIMIT
+    # 根据模式确定获取上限
     effective_limit = 200000 if (mode == 'feb' and not found_qualified) else FETCH_LIMIT
 
     while total_fetched < effective_limit and not found_qualified:
@@ -97,7 +95,7 @@ def test_single_address(addr, fetcher, range_start, range_end, idx, total, sourc
                     best_window_info = (start, end, tx_count, max_days)
                     break
 
-            # 如果已回溯到 range_start 之前（即最早签名时间 < ts_start），说明不可能再有新的在范围内的交易
+            # 如果已回溯到 range_start 之前
             if sigs and sigs[0][1] < ts_start:
                 log(f"已回溯至 {range_start.date()} 之前，停止获取", addr_idx=idx, addr=addr)
                 break
@@ -169,10 +167,10 @@ def test_single_address(addr, fetcher, range_start, range_end, idx, total, sourc
 
     log(f"成功获取 {len(tx_details)} 笔交易详情", addr_idx=idx, addr=addr)
 
-    # 计算首次和最后一次出现（基于全部历史）
+    # [Bug Fix] 修复 datetime 弃用警告，使用带时区的 fromtimestamp
     all_times = [ts for _, ts in sigs]
-    first_seen = datetime.utcfromtimestamp(min(all_times)).strftime('%Y-%m-%d')
-    last_seen = datetime.utcfromtimestamp(max(all_times)).strftime('%Y-%m-%d')
+    first_seen = datetime.fromtimestamp(min(all_times), timezone.utc).strftime('%Y-%m-%d')
+    last_seen = datetime.fromtimestamp(max(all_times), timezone.utc).strftime('%Y-%m-%d')
     start_str = start.strftime('%Y-%m-%d')
     end_str = end.strftime('%Y-%m-%d')
 
@@ -212,18 +210,14 @@ def main():
         source_label = SOURCE_NAME
         source_link = SOURCE_URL
 
-    # 定义允许的最早日期（2026年2月1日）
     earliest_allowed = datetime(2026, 2, 1, 0, 0, 0, tzinfo=timezone.utc)
-
-    # 使用局部变量 mode 处理，避免对导入的 MODE 重新赋值
     mode = MODE
 
-    # 根据模式设置允许的最晚日期
     if mode == 'feb':
         latest_allowed = datetime(2026, 2, 28, 23, 59, 59, tzinfo=timezone.utc)
         log(f"模式：feb（仅限2026年2月内），最早 {earliest_allowed.date()}，最晚 {latest_allowed.date()}")
     elif mode == 'default':
-        latest_allowed = None   # 无上限（实际由当前时间自然决定）
+        latest_allowed = None
         log(f"模式：default（从当前时间回溯，窗口起始日期 ≥ {earliest_allowed.date()}）")
     else:
         log(f"未知模式 {mode}，使用默认 feb 模式")
@@ -236,7 +230,6 @@ def main():
     qualified_addresses = []
     features_list = []
 
-    # 并发数改为 2，加快测试速度（全局限速器确保总请求速率不超过 2 次/秒）
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         future_to_addr = {}
         for idx, addr in enumerate(candidates, 1):
@@ -294,7 +287,6 @@ def main():
         log(f"⚠️ 未找到 generate_plots.py 或缺少绘图库，跳过图表生成。({e})")
     except Exception as e:
         log(f"⚠️ 生成图表时出错: {e}")
-
 
 if __name__ == "__main__":
     main()

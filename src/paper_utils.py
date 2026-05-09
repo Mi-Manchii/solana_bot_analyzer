@@ -77,7 +77,9 @@ def numeric_feature_columns(df):
         if col in ID_COLUMNS:
             continue
         if pd.api.types.is_numeric_dtype(df[col]):
-            cols.append(col)
+            # 只有当列中至少有一个非空值时才将其作为特征，避免被 Imputer 剔除导致长度不匹配
+            if df[col].notna().sum() > 0:
+                cols.append(col)
             continue
         converted = pd.to_numeric(df[col], errors="coerce")
         if converted.notna().sum() > 0:

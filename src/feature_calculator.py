@@ -1,7 +1,8 @@
 # src/feature_calculator.py
 import pandas as pd
 import numpy as np
-from datetime import datetime
+# [Bug Fix] 引入 timezone 解决时间弃用警告
+from datetime import datetime, timezone
 from collections import Counter
 
 
@@ -101,8 +102,11 @@ def compute_features(address, sigs_with_time, transactions=None):
         max_inactive = 0
 
     # 近期交易比例（最近7天）
-    now = datetime.utcnow()
-    recent_7d_start = now - pd.Timedelta(days=7)
+    # [Bug Fix] 使用带时区的 datetime 解决弃用警告
+    now = datetime.now(timezone.utc)
+    # 将 now 转为无时区时间以便于和 df['datetime'] 比较（因为 pd.to_datetime 默认是无时区的）
+    now_naive = now.replace(tzinfo=None)
+    recent_7d_start = now_naive - pd.Timedelta(days=7)
     recent_tx = df[df['datetime'] >= recent_7d_start].shape[0]
     recent_ratio_7d = recent_tx / total_tx if total_tx else 0
 
@@ -161,6 +165,7 @@ def compute_features(address, sigs_with_time, transactions=None):
                 core_dex_tx += 1
             if tx_programs & PUMP_FUN_PROGRAMS:
                 pump_fun_tx += 1
+                
         unique_programs = len(program_counter)
         total_program_calls = sum(program_counter.values())
         program_entropy = _entropy(program_counter)
@@ -180,6 +185,9 @@ def compute_features(address, sigs_with_time, transactions=None):
         rare_tokens = {mint for mint, count in token_tx_counter.items() if count <= 2}
         rare_token_txs = sum(1 for tokens in tx_tokens if tokens & rare_tokens)
         tx_detail_count = len(transactions)
+        
+        # [开题报告对齐] 新增指令类型多样性特征
+        unique_instruction_types = len(instruction_type_counter)
 
         features.update({
             'unique_programs': unique_programs,
@@ -195,6 +203,7 @@ def compute_features(address, sigs_with_time, transactions=None):
             'avg_fee_lamports': round(float(np.mean(fees)) if fees else 0, 2),
             'avg_compute_units': round(float(np.mean(compute_units)) if compute_units else 0, 2),
             'avg_instruction_count': round(float(np.mean(instruction_counts)) if instruction_counts else 0, 2),
+            'unique_instruction_types': unique_instruction_types,  # 新增
             'instruction_program_entropy': round(_entropy(instruction_program_counter), 4),
             'instruction_type_entropy': round(_entropy(instruction_type_counter), 4),
             'core_dex_interaction_ratio': round(core_dex_tx / tx_detail_count if tx_detail_count else 0, 4),
