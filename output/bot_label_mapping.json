@@ -1,0 +1,12 @@
+{
+    "0": "正常用户 (Human)",
+    "11": "MEV - 跨池套利 (MEV - Arbitrage)",
+    "12": "MEV - 清算者 (MEV - Liquidation)",
+    "13": "MEV - 三明治/抢跑 (MEV - Sandwich/Front-run)",
+    "14": "MEV - 流动性狙击 (MEV - Sniping)",
+    "20": "CEX - 热钱包/归集 (CEX - Wallets/Funding)",
+    "30": "DEX - 自动化做市 (DEX - Market Maker)",
+    "60": "通用 - 空投女巫 (General - Sybil Farmer)",
+    "61": "通用 - 垃圾交易 (General - Spam)",
+    "90": "未归类自动化 (Non-attributable)"
+}

@@ -1,0 +1,5 @@
+﻿bot_type,count
+正常用户 (Human),2
+MEV - 跨池套利 (MEV - Arbitrage),2
+未归类自动化 (Non-attributable),2
+DEX - 自动化做市 (DEX - Market Maker),1

@@ -1,8 +1,8 @@
-address,source_label,source_link,first_seen,last_seen,active_days,tx_count_7d,window_start,window_end,total_tx_available
-kiwiC4pg5mC4N5AhpXc4Av3V6oV7Sn2p3CqB7NeHbJJ,Custom Address Pool,,2026-05-03,2026-05-09,7,12300,2026-05-03,2026-05-09,12300
-MWRZZ7WwPojwHgEtWQFP4XNejkwQ5GyJuZR5BLGbSea,Custom Address Pool,,2026-04-22,2026-05-06,15,1848,2026-04-22,2026-04-28,2000
-2PLVmdkQ9f6yVe4SXg34uiptj8qStENcuuV7a1tvRveR,Custom Address Pool,,2026-02-25,2026-03-25,7,27979,2026-02-25,2026-03-03,28000
-2hLexBUxTe1zWizYjDHuot5iQ2muPfjaEwa8EG6M4qj7,Custom Address Pool,,2026-03-21,2026-04-21,25,1886,2026-03-21,2026-03-27,2400
-14ihgruds5osaHs4wq3tjsAyeaRkJBhH5nPAPWka4FUN,Custom Address Pool,,2026-05-03,2026-05-09,7,7400,2026-05-03,2026-05-09,7400
-6K8WfpZuK2HfhTLn2oHtd1pkbTgo6iUFdLT1rNWWiWGd,Custom Address Pool,,2026-03-18,2026-03-24,7,21800,2026-03-18,2026-03-24,21800
-chepn1tuJFA8TzD1iqvgDZha6PDRT3tekm2U1AHeche,Custom Address Pool,,2026-03-04,2026-03-12,7,19227,2026-03-04,2026-03-10,20400
+address,source_label,source_link,first_seen,last_seen,active_days,tx_count_7d,total_tx_available
+2PLVmdkQ9f6yVe4SXg34uiptj8qStENcuuV7a1tvRveR,Custom Address Pool,,2026-03-02,2026-03-25,24,6000,6000
+kiwiC4pg5mC4N5AhpXc4Av3V6oV7Sn2p3CqB7NeHbJJ,Custom Address Pool,,2026-05-08,2026-05-11,4,6000,6000
+MWRZZ7WwPojwHgEtWQFP4XNejkwQ5GyJuZR5BLGbSea,Custom Address Pool,,2026-04-22,2026-05-10,15,1808,2300
+2hLexBUxTe1zWizYjDHuot5iQ2muPfjaEwa8EG6M4qj7,Custom Address Pool,,2026-03-21,2026-04-21,25,1886,2400
+6K8WfpZuK2HfhTLn2oHtd1pkbTgo6iUFdLT1rNWWiWGd,Custom Address Pool,,2026-03-24,2026-03-24,1,6000,6000
+14ihgruds5osaHs4wq3tjsAyeaRkJBhH5nPAPWka4FUN,Custom Address Pool,,2026-05-06,2026-05-11,6,6000,6000
+chepn1tuJFA8TzD1iqvgDZha6PDRT3tekm2U1AHeche,Custom Address Pool,,2026-03-09,2026-03-12,4,6000,6000

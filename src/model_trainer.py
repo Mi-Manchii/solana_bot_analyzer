@@ -1,240 +1,96 @@
-import json
-import joblib
+# src/model_trainer.py
 import pandas as pd
 import numpy as np
-import seaborn as sns
-import matplotlib.pyplot as plt
+import json
 from pathlib import Path
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+import joblib
 
-from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
-from sklearn.mixture import GaussianMixture
-from sklearn.cluster import DBSCAN
-from sklearn.decomposition import PCA
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.metrics import (
-    classification_report, 
-    ConfusionMatrixDisplay, 
-    accuracy_score, 
-    f1_score
-)
-from sklearn.model_selection import (
-    StratifiedKFold, 
-    cross_validate, 
-    cross_val_predict
-)
+# 设置中文字体，防止论文图表乱码 (根据系统可能需要调整，这里给出通用设定)
+plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS'] 
+plt.rcParams['axes.unicode_minus'] = False
 
-# 导入项目中已有的工具函数
-from paper_utils import (
-    ensure_output_dir, 
-    load_features, 
-    numeric_feature_columns, 
-    save_dataframe
-)
-
-# 对应开题报告表 2.1 的特征体系分组
-FEATURE_GROUPS = {
-    "activity": ["total_transactions", "unique_days", "avg_tx_per_day", "max_tx_in_day"],
-    "time": [
-        "night_ratio", "weekend_ratio", "avg_interval_seconds", 
-        "median_interval_seconds", "std_interval_seconds", "cv_interval", 
-        "hourly_entropy", "daily_cv", "max_inactive_days"
-    ],
-    "interaction": ["unique_programs", "program_entropy", "unique_tokens", "token_entropy"],
-    "solana_specific": [
-        "avg_priority_fee_lamports", "priority_fee_cv", "priority_fee_nonzero_ratio",
-        "avg_compute_units", "avg_instruction_count", "instruction_program_entropy",
-        "instruction_type_entropy", "core_dex_interaction_ratio", 
-        "pump_fun_interaction_ratio", "new_token_interaction_ratio"
-    ],
-}
-
-def make_supervised_models():
-    """构建开题报告提到的监督学习集成模型"""
-    models = {
-        "random_forest": Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            # [性能优化]: n_jobs=-1 开启底层随机森林的多核训练
-            ("model", RandomForestClassifier(n_estimators=400, class_weight="balanced", random_state=42, n_jobs=-1))
-        ]),
-        "hist_gradient_boosting": Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler()),
-            ("model", HistGradientBoostingClassifier(max_iter=250, random_state=42))
-        ])
-    }
-    # 尝试加载 XGBoost
-    try:
-        from xgboost import XGBClassifier
-        models["xgboost"] = Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            # [性能优化]: n_jobs=-1 开启 XGBoost 的多核训练
-            ("model", XGBClassifier(n_estimators=300, learning_rate=0.05, random_state=42, n_jobs=-1))
-        ])
-    except ImportError: pass
-    return models
-
-def run_heuristic_baseline(df, output_dir):
-    """
-    实现开题报告 2.4 节要求的启发式规则基线。
-    规则逻辑：高频交易 + 专注特定程序 + 积极支付优先费用。
-    """
-    print("正在运行启发式规则基线...")
-    preds = []
-    for _, row in df.iterrows():
-        # 基于前期实验积累的阈值
-        is_bot = (
-            (row.get('avg_tx_per_day', 0) > 200) and 
-            (row.get('unique_programs', 10) <= 5) and
-            (row.get('priority_fee_nonzero_ratio', 0) > 0.4)
-        )
-        preds.append(1 if is_bot else 0)
+def train_and_evaluate():
+    output_dir = Path(__file__).parent.parent / "output"
+    data_path = output_dir / "heuristic_scores_final.csv"
+    map_path = output_dir / "bot_label_mapping.json"
     
-    df['heuristic_pred'] = preds
-    if "label" in df.columns:
-        y_true = pd.to_numeric(df["label"]).astype(int)
-        report = classification_report(y_true, preds, output_dict=True, zero_division=0)
-        save_dataframe(pd.DataFrame(report).T, output_dir / "heuristic_report.csv")
-        print(f"启发式基线准确率: {report['accuracy']:.4f}")
-    return preds
-
-def run_unsupervised_clustering(output_dir, feature_file="features.csv", n_clusters=3):
-    """
-    实现开题报告第四阶段要求的行为分型探索。
-    使用 GMM 和 DBSCAN 识别机器人亚型（狙击、套利等）。
-    """
-    print(f"正在对 {feature_file} 进行无监督聚类探索...")
-    df = load_features(output_dir, feature_file)
-    cols = numeric_feature_columns(df)
-    
-    # 预处理：填补缺失值并标准化
-    pipe = Pipeline([
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler())
-    ])
-    x_scaled = pipe.fit_transform(df[cols])
-
-    # 1. 高斯混合模型 (GMM) - 用于概率分型
-    gmm = GaussianMixture(n_components=n_clusters, random_state=42)
-    df['gmm_cluster'] = gmm.fit_predict(x_scaled)
-
-    # 2. 聚类特征均值分析 (用于解释亚型行为)
-    cluster_means = df.groupby('gmm_cluster')[cols].mean()
-    save_dataframe(cluster_means, output_dir / "cluster_behavior_analysis.csv")
-
-    # 3. PCA 降维可视化
-    pca = PCA(n_components=2)
-    components = pca.fit_transform(x_scaled)
-    df['pca_1'], df['pca_2'] = components[:, 0], components[:, 1]
-
-    plt.figure(figsize=(10, 7))
-    sns.scatterplot(data=df, x='pca_1', y='pca_2', hue='gmm_cluster', palette='Set1', s=60)
-    plt.title("Solana Bot Behavior Clustering (PCA)")
-    plt.savefig(output_dir / "behavior_clusters.png", dpi=200)
-    plt.close()
-
-    save_dataframe(df, output_dir / "features_with_clusters.csv")
-    print("聚类分析完成，已生成亚型行为特征对比表。")
-
-def train_supervised(output_dir, feature_file="features_labeled.csv"):
-    """
-    执行监督学习训练、交叉验证及消融实验。
-    """
-    output_dir = ensure_output_dir(output_dir)
-    feature_path = output_dir / feature_file
-    if not feature_path.exists():
-        print(f"跳过监督学习：未找到标注数据 {feature_file}")
+    if not data_path.exists():
+        print("❌ 找不到标注数据，请先运行 src/heuristic_baseline.py")
         return
 
-    df = load_features(output_dir, feature_file)
-    y = pd.to_numeric(df["label"]).astype(int)
-    x = df[numeric_feature_columns(df)]
-    cols = x.columns.tolist()
-
-    # 1. 模型性能对比
-    # 将 5 改为 2，或者使用 LeaveOneOut (不推荐，最好还是加数据)
-    cv = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
-    best_model_name = None
-    max_f1 = -1
+    print("🚀 开始加载数据并训练机器学习分类模型...")
+    df = pd.read_csv(data_path)
     
-    results = []
-    print("正在执行交叉验证模型评估...")
-    for name, model in make_supervised_models().items():
-        # [性能优化]: n_jobs=-1 开启交叉验证评估的并发计算
-        scores = cross_validate(model, x, y, cv=cv, scoring=['accuracy', 'f1', 'precision', 'recall'], n_jobs=-1)
-        res = {"model": name}
-        for k, v in scores.items():
-            if k.startswith("test_"): res[k[5:]] = v.mean()
-        results.append(res)
-        if res['f1'] > max_f1:
-            max_f1, best_model_name = res['f1'], name
+    with open(map_path, "r", encoding="utf-8") as f:
+        bot_map = json.load(f)
 
-    save_dataframe(pd.DataFrame(results), output_dir / "supervised_comparison.csv")
-
-    # 2. 运行消融实验
-    print("运行消融实验验证 Solana 特有特征贡献 (此步骤可能需要几十秒)...")
-    ablation_results = []
-    # 全部特征作为基准
-    base_model = make_supervised_models()["random_forest"]
+    # 1. 特征清洗：去除无关列和由于一票否决导致的推导列
+    drop_cols = ['address', 'heuristic_is_bot', 'heuristic_score', 'bot_type_id', 'bot_type_name']
+    # 移除所有 rule_ 开头的规则列，让模型自己去学底层特征
+    drop_cols += [c for c in df.columns if c.startswith('rule_')]
     
-    # [性能优化]: n_jobs=-1 开启基准模型交叉验证的并发计算
-    full_f1 = cross_validate(base_model, x, y, cv=cv, scoring='f1', n_jobs=-1)['test_score'].mean()
-    ablation_results.append({"setting": "All Features", "f1": full_f1, "drop": 0})
+    X = df.drop(columns=[c for c in drop_cols if c in df.columns]).fillna(0)
+    y = df['bot_type_id']
 
-    for group_name, group_cols in FEATURE_GROUPS.items():
-        # 移除该组特征
-        remaining_cols = [c for c in cols if c not in group_cols]
-        if remaining_cols:
-            # [性能优化]: n_jobs=-1 开启特征移除后的交叉验证并发计算
-            f1 = cross_validate(base_model, x[remaining_cols], y, cv=cv, scoring='f1', n_jobs=-1)['test_score'].mean()
-            ablation_results.append({
-                "setting": f"Without {group_name}", 
-                "f1": f1, 
-                "drop": full_f1 - f1
-            })
-    save_dataframe(pd.DataFrame(ablation_results), output_dir / "ablation_study.csv")
+    # 如果样本太少（比如目前只有7个），跳过训练保护
+    if len(df) < 15:
+        print(f"⚠️ 当前总样本仅 {len(df)} 个，不足以进行完整的机器学习训练与交叉验证。")
+        print("💡 请先通过 address_pool.txt 抓取至少 50-100 个地址的数据！")
+        return
 
-    # 3. 最终模型训练与特征重要性
-    print(f"训练最终模型: {best_model_name} ...")
-    final_pipe = make_supervised_models()[best_model_name]
-    final_pipe.fit(x, y)
-    joblib.dump(final_pipe, output_dir / "solana_bot_model.joblib")
+    # 2. 划分训练集和测试集
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
 
-    # [修复]: 并不是所有模型都支持 feature_importances_ 属性 (如 HistGradientBoosting)
-    model_obj = final_pipe.named_steps["model"]
-    if hasattr(model_obj, "feature_importances_"):
-        importance = model_obj.feature_importances_
-        # 确保特征名列表与重要性数组长度完全一致
-        if len(cols) == len(importance):
-            imp_df = pd.DataFrame({"feature": cols, "importance": importance}).sort_values("importance", ascending=False)
-            save_dataframe(imp_df, output_dir / "feature_importance.csv")
-            print("特征重要性评估完成并已保存。")
-        else:
-            print(f"警告: 特征数量({len(cols)})与重要性权重数量({len(importance)})不匹配，跳过保存重要性评估。")
-    else:
-        print(f"提示: 模型 {best_model_name} 不支持直接提取特征重要性，已跳过此步骤。")
+    # 3. 训练随机森林模型
+    rf_model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
+    rf_model.fit(X_train, y_train)
+    
+    # 4. 模型评估
+    y_pred = rf_model.predict(X_test)
+    print("\n📊 === 模型分类报告 (Classification Report) ===")
+    
+    # 将 ID 映射回中文名
+    target_names = [bot_map.get(str(cls_id), f"类型 {cls_id}") for cls_id in np.unique(y_test)]
+    print(classification_report(y_test, y_pred, target_names=target_names, zero_division=0))
 
-    # 混淆矩阵可视化
-    # [性能优化]: n_jobs=-1 开启预测的并发计算
-    y_pred = cross_val_predict(final_pipe, x, y, cv=cv, n_jobs=-1)
-    ConfusionMatrixDisplay.from_predictions(y, y_pred, cmap='Blues')
-    plt.title(f"Confusion Matrix: {best_model_name}")
-    plt.savefig(output_dir / "confusion_matrix.png")
-    plt.close()
+    # 5. 绘制混淆矩阵 (Confusion Matrix) -> 论文必备图表 1
+    cm = confusion_matrix(y_test, y_pred)
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=target_names, yticklabels=target_names)
+    plt.title('Solana Bot 多模态分类混淆矩阵')
+    plt.ylabel('真实标签 (True Label)')
+    plt.xlabel('预测标签 (Predicted Label)')
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    cm_path = output_dir / "confusion_matrix.png"
+    plt.savefig(cm_path, dpi=300)
+    print(f"🖼️ 已生成混淆矩阵图表: {cm_path}")
 
-    print(f"监督学习完成。最佳模型: {best_model_name}, F1: {max_f1:.4f}")
+    # 6. 提取并绘制特征重要性 (Feature Importance) -> 论文必备图表 2
+    importances = rf_model.feature_importances_
+    feat_df = pd.DataFrame({
+        'Feature': X.columns,
+        'Importance': importances
+    }).sort_values(by='Importance', ascending=False).head(15) # 取前15个最重要的特征
+    
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x='Importance', y='Feature', data=feat_df, palette='viridis')
+    plt.title('识别 Solana 机器人的 Top 15 核心特征重要性 (RF)')
+    plt.tight_layout()
+    feat_path = output_dir / "feature_importance.png"
+    plt.savefig(feat_path, dpi=300)
+    print(f"🖼️ 已生成特征重要性图表: {feat_path}")
+
+    # 保存模型
+    model_path = output_dir / "solana_bot_rf_model.joblib"
+    joblib.dump(rf_model, model_path)
+    print(f"💾 模型已保存至: {model_path}")
 
 if __name__ == "__main__":
-    out = Path("output")
-    # 1. 探索性聚类（对应开题报告分型研究）
-    run_unsupervised_clustering(out, "features.csv", n_clusters=3)
-    
-    # 2. 监督学习与验证闭环
-    train_supervised(out, "features_labeled.csv")
-    
-    # 3. 基线对比
-    labeled_df = load_features(out, "features_labeled.csv")
-    run_heuristic_baseline(labeled_df, out)
-    labeled_df = load_features(out, "features_labeled.csv")
-    run_heuristic_baseline(labeled_df, out)
+    train_and_evaluate()

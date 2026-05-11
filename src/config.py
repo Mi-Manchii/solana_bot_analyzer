@@ -12,6 +12,12 @@ if not HELIUS_API_KEY:
 
 RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 
+# ==========================================
+# Solana RPC 节点池 (用于防 429 限流轮询)
+# ==========================================
+RPC_NODES = [
+    RPC_URL,                                # 优先使用你的 Helius 专属节点
+]
 # ==================== 地址来源配置 ====================
 ADDRESS_SOURCES = [
     {

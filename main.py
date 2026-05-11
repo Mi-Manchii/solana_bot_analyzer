@@ -1,3 +1,4 @@
+# main.py
 import sys
 from pathlib import Path
 
@@ -5,6 +6,7 @@ sys.path.append(str(Path(__file__).parent / "src"))
 
 import time
 import pandas as pd
+import numpy as np  # 用于科学均匀抽样
 from datetime import datetime, timezone
 import concurrent.futures
 
@@ -19,37 +21,52 @@ from src.validator import find_best_window_in_range
 from src.feature_calculator import compute_features
 from src.logger import log
 
-# ==================== 性能调优参数 ====================
-MAX_TX_FOR_DETAILS = 100          # [性能优化] 从 500 降为 100，足以提取近期代币和程序交互特征
-DETAILS_DELAY = 0.2               # [性能优化] 降低 RPC 请求延迟，加快数据收集速度
+# ==================== 性能与防错调优参数 ====================
+MAX_TX_FOR_DETAILS = 100          # 深度交互特征抽样上限（兼顾速度与代表性）
+MAX_MACRO_SIGS = 6000             # 宏观签名拉取硬上限（6页RPC请求，完美提速）
+DETAILS_DELAY = 0.2               # RPC 请求延迟
 DETAILS_PROGRESS_BATCH = 50       # 进度打印批次
-# ====================================================
+# ==========================================================
 
 def test_single_address(addr, fetcher, range_start, range_end, idx, total, source_label, source_link, mode):
-    """
-    测试单个地址。
-    - range_start: 允许的最早交易日期（datetime，带时区）
-    - range_end:   允许的最晚交易日期（datetime，带时区）；若为 None 则表示无上限
-    - mode: 'feb' 或 'default'
-    """
     log(f"开始测试地址 ({idx}/{total})", addr_idx=idx, addr=addr)
 
-    # ---------- 分页获取签名，从最新到最旧 ----------
-    sigs = []          # 按时间正序存储 (signature, block_time) [旧 -> 新]
+    sigs = []          
+    err_map = {}       # 记录每笔宏观交易是否失败
     before = None
     page_limit = 100
     total_fetched = 0
     found_qualified = False
-    best_window_info = None   # (start, end, tx_count, max_days)
+    best_window_info = None   
 
-    # 将 range_start 转换为时间戳（用于快速比较）
     ts_start = range_start.timestamp()
     ts_end = range_end.timestamp() if range_end else float('inf')
 
-    # 根据模式确定获取上限
     effective_limit = 200000 if (mode == 'feb' and not found_qualified) else FETCH_LIMIT
 
+    # ---------- 第一阶段：海量轻量级拉取 (构建宏观时间线) ----------
     while total_fetched < effective_limit and not found_qualified:
+        
+        # [核心优化] 触发 6000 笔提速硬上限
+        if total_fetched >= MAX_MACRO_SIGS:
+            log(f"⚡ 达到提速硬上限 ({MAX_MACRO_SIGS}笔)，停止拉取宏观签名。", addr_idx=idx, addr=addr, level="WARNING")
+            
+            # [尽善尽美的特权机制]：因为能在短时间打满 6000 笔绝对是机器人
+            # 豁免它对 MIN_CONTINUOUS_DAYS 的审查，强制构建入围窗口，保送进入 100 笔详情抽样！
+            if sigs:
+                all_times = [ts for _, ts in sigs]
+                actual_start_ts = min(all_times)
+                actual_end_ts = max(all_times)
+                start_dt = datetime.fromtimestamp(actual_start_ts, timezone.utc)
+                end_dt = datetime.fromtimestamp(actual_end_ts, timezone.utc)
+                # 哪怕只跑了1小时，也算作1天的活跃度，防止除0错误
+                span_days = max(1, (end_dt.date() - start_dt.date()).days + 1) 
+                
+                best_window_info = (start_dt, end_dt, len(sigs), span_days)
+                found_qualified = True
+                log(f"🚀 已触发保送机制，强制入围！耗时 {span_days} 天打满 {len(sigs)} 笔交易。", addr_idx=idx, addr=addr)
+            break
+
         try:
             params = [addr, {"limit": page_limit}]
             if before:
@@ -59,29 +76,28 @@ def test_single_address(addr, fetcher, range_start, range_end, idx, total, sourc
             if not sigs_info:
                 break
 
-            # 处理当前页签名
             page_sigs = []
             for sig in sigs_info:
                 block_time = sig.get("blockTime")
                 if block_time:
                     page_sigs.append((sig["signature"], block_time))
+                    # 0成本提取交易失败状态，用于计算全局 failed_tx_ratio
+                    err_map[sig["signature"]] = sig.get("err") is not None
 
             if not page_sigs:
                 break
 
-            # 将当前页反转（变成从旧到新），插入 sigs 开头
             page_sigs.reverse()
             sigs = page_sigs + sigs
             total_fetched += len(page_sigs)
 
-            # 从已获取的签名中筛选出在 [ts_start, ts_end] 范围内的交易
             range_sigs = [
                 (sig, ts) for sig, ts in sigs
                 if ts_start <= ts <= ts_end
             ]
 
-            if range_sigs:
-                # 在范围内寻找符合条件的连续窗口
+            # 正常情况下的活跃度窗口检验
+            if range_sigs and not found_qualified:
                 found, start, end, tx_count, max_days = find_best_window_in_range(
                     range_sigs,
                     window_days=MIN_CONTINUOUS_DAYS,
@@ -90,17 +106,14 @@ def test_single_address(addr, fetcher, range_start, range_end, idx, total, sourc
                     range_end=range_end.date() if range_end else None
                 )
                 if found:
-                    log(f"✅ 提前找到符合条件的窗口！最长连续 {max_days} 天，7天窗口交易数 = {tx_count} (窗口 {start} 至 {end})", addr_idx=idx, addr=addr)
+                    log(f"✅ 找到符合条件的常规窗口！最长连续 {max_days} 天，相关交易数 = {tx_count}", addr_idx=idx, addr=addr)
                     found_qualified = True
                     best_window_info = (start, end, tx_count, max_days)
                     break
 
-            # 如果已回溯到 range_start 之前
             if sigs and sigs[0][1] < ts_start:
-                log(f"已回溯至 {range_start.date()} 之前，停止获取", addr_idx=idx, addr=addr)
                 break
 
-            # 准备下一页
             if len(sigs_info) < page_limit:
                 break
             before = sigs_info[-1]["signature"]
@@ -109,7 +122,7 @@ def test_single_address(addr, fetcher, range_start, range_end, idx, total, sourc
             log(f"获取签名出错: {e}", addr_idx=idx, addr=addr, level="ERROR")
             break
 
-    # 如果循环结束仍未找到，进行最后一次检查
+    # 兜底校验
     if not found_qualified:
         range_sigs_final = [
             (sig, ts) for sig, ts in sigs
@@ -126,53 +139,56 @@ def test_single_address(addr, fetcher, range_start, range_end, idx, total, sourc
             if found:
                 found_qualified = True
                 best_window_info = (start, end, tx_count, max_days)
-                log(f"✅ 最终检查找到符合条件的窗口！最长连续 {max_days} 天，7天窗口交易数 = {tx_count} (窗口 {start} 至 {end})", addr_idx=idx, addr=addr)
             else:
-                log(f"不符合条件：最长连续天数 {max_days}，最优窗口交易数 = {tx_count}（需≥{MIN_TX_IN_WINDOW}）", addr_idx=idx, addr=addr)
                 return None
         else:
-            log(f"{range_start.date()} 之后无交易记录", addr_idx=idx, addr=addr)
             return None
 
-    # ---------- 符合条件，继续处理 ----------
     start, end, tx_count, max_days = best_window_info
 
-    # 获取范围内所有签名（用于特征计算）
     range_sigs = [
         (sig, ts) for sig, ts in sigs
         if ts_start <= ts <= ts_end
     ]
 
-    # 获取交易详情
     signatures = [sig for sig, _ in range_sigs]
     total_sigs = len(signatures)
-    log(f"开始获取 {total_sigs} 笔交易的详情（用于特征计算）...", addr_idx=idx, addr=addr)
-
+    
+    # ---------- 第二阶段：微观解耦均匀抽样 (获取深度交互细节) ----------
     if MAX_TX_FOR_DETAILS and total_sigs > MAX_TX_FOR_DETAILS:
-        signatures = signatures[-MAX_TX_FOR_DETAILS:]
-        log(f"限制为最近 {MAX_TX_FOR_DETAILS} 笔交易以加快处理", addr_idx=idx, addr=addr)
+        log(f"触发科学分层抽样：从宏观 {total_sigs} 笔中均匀抽取 {MAX_TX_FOR_DETAILS} 笔以获取微观分类特征...", addr_idx=idx, addr=addr)
+        # numpy linspace 完美实现从头到尾的均匀覆盖抽样
+        indices = np.linspace(0, total_sigs - 1, MAX_TX_FOR_DETAILS, dtype=int)
+        signatures_for_details = [signatures[i] for i in indices]
+    else:
+        signatures_for_details = signatures
 
     tx_details = []
     batch_size = DETAILS_PROGRESS_BATCH
-    total_batches = (len(signatures) + batch_size - 1) // batch_size
-    for i in range(0, len(signatures), batch_size):
-        batch_sigs = signatures[i:i+batch_size]
+    total_batches = (len(signatures_for_details) + batch_size - 1) // batch_size
+    for i in range(0, len(signatures_for_details), batch_size):
+        batch_sigs = signatures_for_details[i:i+batch_size]
         batch_details = fetcher.get_transaction_details_batch(
             batch_sigs,
             delay_per_request=DETAILS_DELAY
         )
         tx_details.extend(batch_details)
         current = len(tx_details)
-        log(f"已获取 {current}/{len(signatures)} 笔交易详情 (批次 {i//batch_size+1}/{total_batches})", addr_idx=idx, addr=addr)
+        log(f"已获取 {current}/{len(signatures_for_details)} 笔微观交易详情 (批次 {i//batch_size+1}/{total_batches})", addr_idx=idx, addr=addr)
 
-    log(f"成功获取 {len(tx_details)} 笔交易详情", addr_idx=idx, addr=addr)
+    log(f"成功获取 {len(tx_details)} 笔深度详情，准备计算全量分类特征...", addr_idx=idx, addr=addr)
 
-    # [Bug Fix] 修复 datetime 弃用警告，使用带时区的 fromtimestamp
+    # ---------- 数据抗毒化保护机制 ----------
+    expected_details = len(signatures_for_details)
+    actual_details = len(tx_details)
+    
+    if expected_details > 0 and (actual_details / expected_details) < 0.5:
+        log(f"❌ 放弃该地址：RPC 微观详情存活率极低 ({actual_details}/{expected_details})。数据可能被污染！", addr_idx=idx, addr=addr, level="WARNING")
+        return None  
+
     all_times = [ts for _, ts in sigs]
     first_seen = datetime.fromtimestamp(min(all_times), timezone.utc).strftime('%Y-%m-%d')
     last_seen = datetime.fromtimestamp(max(all_times), timezone.utc).strftime('%Y-%m-%d')
-    start_str = start.strftime('%Y-%m-%d')
-    end_str = end.strftime('%Y-%m-%d')
 
     addr_info = {
         'address': addr,
@@ -182,17 +198,14 @@ def test_single_address(addr, fetcher, range_start, range_end, idx, total, sourc
         'last_seen': last_seen,
         'active_days': max_days,
         'tx_count_7d': tx_count,
-        'window_start': start_str,
-        'window_end': end_str,
         'total_tx_available': len(sigs)
     }
 
-    features = compute_features(addr, range_sigs, transactions=tx_details)
+    # 将宏观失败状态与微观详情一并传入计算器
+    features = compute_features(addr, range_sigs, transactions=tx_details, err_map=err_map)
     return addr_info, features
 
-
 def main():
-    # 创建输出目录
     output_dir = Path(__file__).parent / "output"
     output_dir.mkdir(exist_ok=True)
 
@@ -220,7 +233,6 @@ def main():
         latest_allowed = None
         log(f"模式：default（从当前时间回溯，窗口起始日期 ≥ {earliest_allowed.date()}）")
     else:
-        log(f"未知模式 {mode}，使用默认 feb 模式")
         mode = 'feb'
         latest_allowed = datetime(2026, 2, 28, 23, 59, 59, tzinfo=timezone.utc)
 
@@ -267,26 +279,11 @@ def main():
     df_addr = pd.DataFrame(qualified_addresses)
     addr_csv_path = output_dir / 'addresses.csv'
     df_addr.to_csv(addr_csv_path, index=False)
-    log(f"✅ addresses.csv 已生成，包含 {len(df_addr)} 个地址 -> {addr_csv_path}")
 
     df_feat = pd.DataFrame(features_list)
     feat_csv_path = output_dir / 'features.csv'
     df_feat.to_csv(feat_csv_path, index=False)
-    log(f"✅ features.csv 已生成，包含 {len(df_feat)} 行特征 -> {feat_csv_path}")
-    features_v2_path = output_dir / 'features_v2.csv'
-    df_feat.to_csv(features_v2_path, index=False)
-    log(f"✅ features_v2.csv 已生成，便于论文实验引用 -> {features_v2_path}")
-
-    try:
-        log("正在生成分布图...")
-        sys.path.append(str(Path(__file__).parent))
-        from generate_plots import plot_distributions
-        plot_distributions(output_dir)
-        log("✅ 分布图已生成")
-    except ImportError as e:
-        log(f"⚠️ 未找到 generate_plots.py 或缺少绘图库，跳过图表生成。({e})")
-    except Exception as e:
-        log(f"⚠️ 生成图表时出错: {e}")
+    log(f"✅ 特征文件已生成: {feat_csv_path}")
 
 if __name__ == "__main__":
     main()
